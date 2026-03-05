@@ -76,6 +76,40 @@ const globalCSS = `
     100% { box-shadow: 0 0 8px rgba(124,58,237,.7), 0 0 0 0   rgba(124,58,237,0);  }
   }
   .dot-active { animation: ripple 1.8s ease-out infinite; }
+
+  /* ── Alien welcome — motion animations ── */
+  @keyframes alienFloat {
+    0%, 100% { transform: translateY(0px) rotate(0deg); }
+    30%       { transform: translateY(-14px) rotate(.4deg); }
+    70%       { transform: translateY(-8px)  rotate(-.3deg); }
+  }
+  @keyframes alienGlow {
+    0%, 100% { filter: drop-shadow(0 0 14px rgba(124,58,237,.45))
+                       drop-shadow(0 0 32px rgba(79,70,229,.2)); }
+    50%       { filter: drop-shadow(0 0 28px rgba(124,58,237,.9))
+                       drop-shadow(0 0 60px rgba(124,58,237,.4)); }
+  }
+  @keyframes circuitBreath {
+    0%, 100% { opacity: .38; }
+    50%       { opacity: .85; }
+  }
+  @keyframes eyeShimmer {
+    0%, 78%, 100% { opacity: 1; }
+    84%            { opacity: .5; }
+    88%            { opacity: 1; }
+    92%            { opacity: .6; }
+  }
+  @keyframes scanLine {
+    0%   { transform: translateY(-130px); opacity: 0; }
+    8%   { opacity: .35; }
+    92%  { opacity: .35; }
+    100% { transform: translateY(145px); opacity: 0; }
+  }
+  .alien-svg  { animation: alienFloat 5.5s ease-in-out infinite,
+                            alienGlow  3.5s ease-in-out infinite; }
+  .alien-circ { animation: circuitBreath 2.8s ease-in-out infinite; }
+  .alien-eyes { animation: eyeShimmer 6s ease-in-out infinite; }
+  .alien-scan { animation: scanLine 5s linear 1.5s infinite; }
 `
 const styleTag = document.createElement('style')
 styleTag.textContent = globalCSS
@@ -209,10 +243,11 @@ const S = {
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 16,
+    gap: 12,
     padding: 40,
     color: '#3f3f5a',
     overflow: 'hidden',
+    position: 'relative', // allows canvas + elements to layer correctly
   },
   emptyIcon: {
     fontSize: 56,
@@ -562,6 +597,198 @@ function exportNotes(analysis, videoId, videoUrl) {
 }
 
 /* ─────────────────────────────────────────────
+   Welcome screen — particle canvas
+───────────────────────────────────────────── */
+function WelcomeCanvas() {
+  const ref = useRef(null)
+  useEffect(() => {
+    const canvas = ref.current
+    if (!canvas) return
+    let animId
+    const ctx = canvas.getContext('2d')
+    const pts = []
+
+    const init = () => {
+      canvas.width  = canvas.offsetWidth
+      canvas.height = canvas.offsetHeight
+      pts.length = 0
+      for (let i = 0; i < 60; i++) {
+        pts.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          r: Math.random() * 1.4 + 0.3,
+          vx: (Math.random() - .5) * .32,
+          vy: (Math.random() - .5) * .32,
+          hue: Math.random() > .55 ? 174 : 262,
+          a: Math.random() * .38 + .12,
+        })
+      }
+    }
+
+    const tick = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      pts.forEach(p => {
+        p.x = (p.x + p.vx + canvas.width)  % canvas.width
+        p.y = (p.y + p.vy + canvas.height) % canvas.height
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
+        ctx.fillStyle = `hsla(${p.hue},65%,72%,${p.a})`
+        ctx.fill()
+      })
+      for (let i = 0; i < pts.length; i++) {
+        for (let j = i + 1; j < pts.length; j++) {
+          const dx = pts[i].x - pts[j].x, dy = pts[i].y - pts[j].y
+          const d = Math.sqrt(dx * dx + dy * dy)
+          if (d < 90) {
+            ctx.beginPath()
+            ctx.moveTo(pts[i].x, pts[i].y)
+            ctx.lineTo(pts[j].x, pts[j].y)
+            ctx.strokeStyle = `rgba(124,58,237,${(1 - d / 90) * .2})`
+            ctx.lineWidth = .5
+            ctx.stroke()
+          }
+        }
+      }
+      animId = requestAnimationFrame(tick)
+    }
+
+    const ro = new ResizeObserver(init)
+    ro.observe(canvas)
+    init()
+    tick()
+    return () => { cancelAnimationFrame(animId); ro.disconnect() }
+  }, [])
+
+  return (
+    <canvas
+      ref={ref}
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+    />
+  )
+}
+
+/* ─────────────────────────────────────────────
+   Welcome screen — alien SVG figure
+───────────────────────────────────────────── */
+function AlienFigure() {
+  return (
+    <svg
+      viewBox="0 0 200 295"
+      className="alien-svg"
+      style={{ width: 190, height: 278, flexShrink: 0, zIndex: 1 }}
+    >
+      <defs>
+        <radialGradient id="alien-hg" cx="50%" cy="32%" r="55%">
+          <stop offset="0%"   stopColor="rgba(196,181,253,0.2)" />
+          <stop offset="100%" stopColor="rgba(79,70,229,0.03)" />
+        </radialGradient>
+        <radialGradient id="alien-eg" cx="38%" cy="32%" r="52%">
+          <stop offset="0%"   stopColor="#e9d5ff" />
+          <stop offset="55%"  stopColor="#7c3aed" />
+          <stop offset="100%" stopColor="#3b0764" />
+        </radialGradient>
+        <filter id="alien-glow" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="2.5" result="b" />
+          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+
+      {/* ── Horns ── */}
+      <path d="M 72 60 L 56 4  L 86 54" fill="rgba(220,212,255,.9)" stroke="rgba(167,139,250,.35)" strokeWidth=".7"/>
+      <path d="M 128 60 L 144 4 L 114 54" fill="rgba(220,212,255,.9)" stroke="rgba(167,139,250,.35)" strokeWidth=".7"/>
+      {/* Horn inner highlight */}
+      <path d="M 72 60 L 66 28 L 78 57" fill="rgba(255,255,255,.22)" />
+      <path d="M 128 60 L 134 28 L 122 57" fill="rgba(255,255,255,.22)" />
+
+      {/* ── Head outer glass ── */}
+      <ellipse cx="100" cy="135" rx="78" ry="96"
+        fill="url(#alien-hg)" stroke="rgba(167,139,250,.3)" strokeWidth="1.5"/>
+      {/* Head inner highlight (top-left catch-light) */}
+      <ellipse cx="78" cy="100" rx="26" ry="30"
+        fill="rgba(255,255,255,.04)" stroke="rgba(255,255,255,.07)" strokeWidth=".8"/>
+
+      {/* ── Circuit veins (breathing) ── */}
+      <g className="alien-circ" filter="url(#alien-glow)"
+        stroke="rgba(167,139,250,.6)" strokeWidth=".9" fill="none">
+        <path d="M 58 118 H 74 L 79 108 H 100 L 105 118 H 122 L 127 108 H 144"/>
+        <path d="M 62 150 H 76 L 81 140 H 100 L 107 150 H 124 L 129 140 H 142"/>
+        <line x1="74"  y1="108" x2="74"  y2="150"/>
+        <line x1="126" y1="108" x2="126" y2="150"/>
+        {/* Circuit nodes */}
+        <circle cx="100" cy="118" r="3.5" fill="rgba(124,58,237,.75)" stroke="rgba(167,139,250,.7)" strokeWidth=".6"/>
+        <circle cx="74"  cy="128" r="2"   fill="rgba(20,184,166,.9)"/>
+        <circle cx="126" cy="128" r="2"   fill="rgba(20,184,166,.9)"/>
+        <circle cx="100" cy="140" r="2"   fill="rgba(167,139,250,.7)"/>
+        <circle cx="62"  cy="128" r="1.5" fill="rgba(124,58,237,.5)"/>
+        <circle cx="138" cy="128" r="1.5" fill="rgba(124,58,237,.5)"/>
+      </g>
+
+      {/* ── Scan line (sweeps downward) ── */}
+      <clipPath id="alien-clip">
+        <ellipse cx="100" cy="135" rx="77" ry="95"/>
+      </clipPath>
+      <rect x="23" y="60" width="154" height="3" rx="1.5"
+        fill="rgba(167,139,250,.25)" className="alien-scan"
+        clipPath="url(#alien-clip)"/>
+
+      {/* ── Eyes ── */}
+      <g className="alien-eyes" filter="url(#alien-glow)">
+        <ellipse cx="78"  cy="140" rx="17" ry="13" fill="url(#alien-eg)"/>
+        <ellipse cx="122" cy="140" rx="17" ry="13" fill="url(#alien-eg)"/>
+      </g>
+      {/* Pupils */}
+      <ellipse cx="78"  cy="140" rx="8"   ry="7.5" fill="rgba(15,5,35,.94)"/>
+      <ellipse cx="122" cy="140" rx="8"   ry="7.5" fill="rgba(15,5,35,.94)"/>
+      {/* Reflections */}
+      <ellipse cx="74"  cy="135" rx="3.2" ry="2.6" fill="rgba(255,255,255,.48)"/>
+      <ellipse cx="118" cy="135" rx="3.2" ry="2.6" fill="rgba(255,255,255,.48)"/>
+
+      {/* ── Nose / face ── */}
+      <path d="M 94 162 Q 100 172 106 162" fill="rgba(196,181,253,.12)"
+        stroke="rgba(167,139,250,.22)" strokeWidth=".8"/>
+      {/* Mouth */}
+      <path d="M 86 184 Q 100 192 114 184" fill="none"
+        stroke="rgba(167,139,250,.28)" strokeWidth="1"/>
+
+      {/* ── Jaw line ── */}
+      <path d="M 42 178 Q 50 218 100 228 Q 150 218 158 178"
+        fill="rgba(79,70,229,.04)" stroke="rgba(124,58,237,.14)" strokeWidth=".8"/>
+
+      {/* ── Neck ── */}
+      <rect x="84" y="225" width="32" height="40" rx="3"
+        fill="rgba(109,40,217,.1)" stroke="rgba(124,58,237,.32)" strokeWidth=".9"/>
+      <g className="alien-circ" stroke="rgba(124,58,237,.5)" strokeWidth=".55" fill="none">
+        <line x1="90" y1="231" x2="90" y2="260"/>
+        <line x1="96" y1="231" x2="96" y2="260"/>
+        <line x1="100" y1="231" x2="100" y2="260"/>
+        <line x1="104" y1="231" x2="104" y2="260"/>
+        <line x1="110" y1="231" x2="110" y2="260"/>
+        <line x1="87"  y1="241" x2="113" y2="241"/>
+        <line x1="87"  y1="252" x2="113" y2="252"/>
+        <rect x="97" y="244" width="6" height="5" fill="rgba(20,184,166,.38)"/>
+      </g>
+
+      {/* ── Shoulders ── */}
+      <path d="M 26 263 Q 52 250 84 262 L 84 287 Q 52 295 26 280 Z"
+        fill="rgba(109,40,217,.08)" stroke="rgba(124,58,237,.22)" strokeWidth="1"/>
+      <path d="M 174 263 Q 148 250 116 262 L 116 287 Q 148 295 174 280 Z"
+        fill="rgba(109,40,217,.08)" stroke="rgba(124,58,237,.22)" strokeWidth="1"/>
+      {/* Shoulder circuits */}
+      <g stroke="rgba(20,184,166,.42)" strokeWidth=".55" fill="none">
+        <line x1="40" y1="269" x2="74" y2="269"/><line x1="44" y1="276" x2="68" y2="276"/>
+        <circle cx="50" cy="269" r="2" fill="rgba(20,184,166,.65)"/>
+        <circle cx="63" cy="276" r="2" fill="rgba(124,58,237,.6)"/>
+      </g>
+      <g stroke="rgba(20,184,166,.42)" strokeWidth=".55" fill="none">
+        <line x1="160" y1="269" x2="126" y2="269"/><line x1="156" y1="276" x2="132" y2="276"/>
+        <circle cx="150" cy="269" r="2" fill="rgba(20,184,166,.65)"/>
+        <circle cx="137" cy="276" r="2" fill="rgba(124,58,237,.6)"/>
+      </g>
+    </svg>
+  )
+}
+
+/* ─────────────────────────────────────────────
    Components
 ───────────────────────────────────────────── */
 function KnowledgeCard({ icon, title, children }) {
@@ -835,15 +1062,23 @@ export default function App() {
         <div style={S.errorBox}>⚠ {errorMsg}</div>
       )}
 
-      {/* ── Empty state ── */}
+      {/* ── Empty state — animated alien welcome ── */}
       {status === 'idle' && (
         <div style={S.empty}>
-          <div style={S.emptyIcon}>🎬</div>
-          <div style={S.emptyTitle}>粘贴一个 YouTube 链接开始学习</div>
-          <div style={{ color: '#3f3f5a', fontSize: 13 }}>
+          {/* Particle field background */}
+          <WelcomeCanvas />
+
+          {/* Alien figure */}
+          <AlienFigure />
+
+          {/* Text */}
+          <div style={{ ...S.emptyTitle, zIndex: 1, marginTop: 8 }}>
+            粘贴一个 YouTube 链接开始学习
+          </div>
+          <div style={{ color: '#4a4a6a', fontSize: 13, zIndex: 1, textAlign: 'center', maxWidth: 420 }}>
             YouLearn 将自动提取字幕、翻译并生成结构化知识框架
           </div>
-          <div style={S.emptyHints}>
+          <div style={{ ...S.emptyHints, zIndex: 1 }}>
             {['教学讲座', '技术分享', 'TED 演讲', '纪录片', '新闻报道'].map((t) => (
               <span key={t} style={S.emptyHint}>{t}</span>
             ))}
