@@ -2,6 +2,8 @@ import os
 import re
 import json
 import socket
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
@@ -12,6 +14,25 @@ load_dotenv(override=True)
 
 app = Flask(__name__)
 CORS(app, origins="*")
+
+# ── In-memory result cache (video_id → full response dict) ──────────────────
+# Survives for the lifetime of the process; cleared on redeploy.
+# Keeps the last CACHE_MAX videos so memory stays bounded.
+_cache: dict = {}
+_cache_lock = threading.Lock()
+CACHE_MAX = 60
+
+def _cache_get(video_id: str) -> dict | None:
+    with _cache_lock:
+        return _cache.get(video_id)
+
+def _cache_set(video_id: str, data: dict) -> None:
+    with _cache_lock:
+        if len(_cache) >= CACHE_MAX:
+            oldest = next(iter(_cache))
+            del _cache[oldest]
+        _cache[video_id] = data
+
 
 def get_client():
     """Lazy-init DeepSeek client so missing key doesn't crash startup."""
@@ -101,7 +122,7 @@ def deepseek_generate(prompt: str) -> str:
         response = get_client().chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],
-            timeout=60.0,   # prevent infinite hang on slow/unresponsive API
+            timeout=60.0,
         )
         return response.choices[0].message.content
     except AuthenticationError:
@@ -163,13 +184,34 @@ def translate_batch(batch: list[dict], offset: int) -> dict:
 
 
 def translate_subtitles(subtitles: list[dict]) -> list[dict]:
-    """Translate English subtitle entries to Chinese using DeepSeek (batched)."""
-    BATCH_SIZE = 50
-    zh_map: dict = {}  # {1-based line number → zh string}
+    """Translate English subtitles to Chinese — all batches fire in parallel.
 
-    for i in range(0, len(subtitles), BATCH_SIZE):
-        batch = subtitles[i:i + BATCH_SIZE]
-        zh_map.update(translate_batch(batch, i))
+    Speedup vs sequential:
+      500 subtitles / 100 per batch = 5 batches
+      Sequential:  5 × ~20 s = ~100 s
+      Parallel:    max(~20 s) =  ~20 s   → ~5× faster
+    """
+    BATCH_SIZE = 100          # larger batches = fewer round-trips
+    MAX_WORKERS = 10          # up to 10 concurrent DeepSeek requests
+
+    batches = [
+        (i, subtitles[i:i + BATCH_SIZE])
+        for i in range(0, len(subtitles), BATCH_SIZE)
+    ]
+
+    zh_map: dict = {}
+    with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(batches))) as pool:
+        future_to_offset = {
+            pool.submit(translate_batch, batch, offset): offset
+            for offset, batch in batches
+        }
+        for future in as_completed(future_to_offset):
+            try:
+                zh_map.update(future.result())
+            except Exception:
+                # Batch failed — those lines will simply have empty zh.
+                # The frontend guard already handles missing translations.
+                pass
 
     result = []
     for i, s in enumerate(subtitles):
@@ -201,15 +243,20 @@ def build_bilingual_subtitles(subtitles: list[dict], lang: str) -> list[dict]:
             }
             for s in subtitles
         ]
-    # English — translate to Chinese
+    # English — translate to Chinese (parallel batches)
     return translate_subtitles(subtitles)
 
 
 def analyze_transcript(subtitles: list[dict]) -> dict:
-    """Send first 200 subtitles to DeepSeek for structured analysis."""
+    """Send first 200 subtitles to DeepSeek for structured analysis.
+
+    Accepts both raw subtitles (key 'text') and bilingual dicts
+    (keys 'en'/'zh') so it can run concurrently with translation.
+    """
     sample = subtitles[:200]
     full_text = " ".join(
-        (s.get("zh") or s.get("en", "")).strip() for s in sample
+        (s.get("zh") or s.get("en") or s.get("text", "")).strip()
+        for s in sample
     )
 
     prompt = (
@@ -250,6 +297,11 @@ def analyze():
     if not video_id:
         return jsonify({"error": "Could not extract video ID from URL"}), 400
 
+    # ── Cache hit: return instantly for previously-analyzed videos ──────────
+    cached = _cache_get(video_id)
+    if cached:
+        return jsonify(cached)
+
     # Step 2: Fetch transcript
     try:
         raw_subtitles, lang = fetch_transcript(video_id)
@@ -265,32 +317,63 @@ def analyze():
             return jsonify({"error": "字幕提取超时，请重试"}), 504
         return jsonify({"error": f"字幕提取失败：{str(e)}"}), 500
 
-    # Step 3: Build bilingual subtitles (translate if English)
-    try:
-        bilingual_subtitles = build_bilingual_subtitles(raw_subtitles, lang)
-    except TimeoutError as e:
-        return jsonify({"error": str(e)}), 504
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 401
-    except Exception as e:
-        return jsonify({"error": f"翻译失败：{str(e)}"}), 500
+    # Steps 3 + 4: Translation and analysis run CONCURRENTLY ─────────────────
+    #
+    #  ┌─ build_bilingual_subtitles ─────── parallel batches ──┐
+    #  │  (translate all subtitle lines)                        ├─ both finish
+    #  └─ analyze_transcript ──────────────── single call ──────┘  together
+    #
+    # analyze_transcript uses raw_subtitles directly so it doesn't wait
+    # for translation to complete first.
 
-    # Step 4: Analyze transcript with DeepSeek
-    try:
-        analysis = analyze_transcript(bilingual_subtitles)
-    except TimeoutError as e:
-        return jsonify({"error": str(e)}), 504
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 401
-    except Exception as e:
-        return jsonify({"error": f"分析失败：{str(e)}"}), 500
+    bilingual_subtitles = None
+    analysis = None
+    error_response = None
 
-    # Step 5: Return full response
-    return jsonify({
+    def _translate():
+        return build_bilingual_subtitles(raw_subtitles, lang)
+
+    def _analyze():
+        return analyze_transcript(raw_subtitles)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        ft = pool.submit(_translate)
+        fa = pool.submit(_analyze)
+
+        # Collect translation result
+        try:
+            bilingual_subtitles = ft.result()
+        except TimeoutError as e:
+            error_response = (jsonify({"error": str(e)}), 504)
+        except ValueError as e:
+            error_response = (jsonify({"error": str(e)}), 401)
+        except Exception as e:
+            error_response = (jsonify({"error": f"翻译失败：{str(e)}"}), 500)
+
+        # Collect analysis result
+        try:
+            analysis = fa.result()
+        except TimeoutError as e:
+            if not error_response:
+                error_response = (jsonify({"error": str(e)}), 504)
+        except ValueError as e:
+            if not error_response:
+                error_response = (jsonify({"error": str(e)}), 401)
+        except Exception as e:
+            if not error_response:
+                error_response = (jsonify({"error": f"分析失败：{str(e)}"}), 500)
+
+    if error_response:
+        return error_response
+
+    # Step 5: Build, cache, and return full response
+    response_data = {
         "videoId": video_id,
         "subtitles": bilingual_subtitles,
         "analysis": analysis,
-    })
+    }
+    _cache_set(video_id, response_data)
+    return jsonify(response_data)
 
 
 # ── Static file serving (production: Flask hosts the built frontend) ──
