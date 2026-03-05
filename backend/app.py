@@ -13,10 +13,15 @@ load_dotenv(override=True)
 app = Flask(__name__)
 CORS(app, origins="*")
 
-client = OpenAI(
-    api_key=os.getenv("DEEPSEEK_API_KEY"),
-    base_url="https://api.deepseek.com",
-)
+def get_client():
+    """Lazy-init DeepSeek client so missing key doesn't crash startup."""
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    if not api_key:
+        raise RuntimeError("DEEPSEEK_API_KEY environment variable is not set")
+    return OpenAI(
+        api_key=api_key,
+        base_url="https://api.deepseek.com",
+    )
 
 
 def extract_video_id(url: str) -> str | None:
@@ -93,7 +98,7 @@ def parse_json_response(raw: str) -> dict | list:
 def deepseek_generate(prompt: str) -> str:
     """Call DeepSeek and return response text, with error mapping."""
     try:
-        response = client.chat.completions.create(
+        response = get_client().chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],
         )
