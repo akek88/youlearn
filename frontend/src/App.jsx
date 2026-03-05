@@ -210,14 +210,14 @@ const S = {
     minHeight: 0,
   },
 
-  /* Left column — fixed, no overflow of its own */
+  /* Left column — scrollable so cards stay reachable after fullscreen */
   leftCol: {
     flex: 1,
     display: 'flex',
     flexDirection: 'column',
     borderRight: '1px solid #1e1e32',
     minWidth: 0,
-    overflow: 'hidden',
+    overflowY: 'auto',
   },
 
   /* Sticky player area — never scrolls */
@@ -250,13 +250,13 @@ const S = {
   },
   subEn: {
     color: '#ffffff',
-    fontSize: 14,
+    fontSize: 21,
     textShadow: '0 1px 4px rgba(0,0,0,.9)',
     lineHeight: 1.5,
   },
   subZh: {
     color: '#fde047',
-    fontSize: 15,
+    fontSize: 23,
     fontWeight: 500,
     textShadow: '0 1px 4px rgba(0,0,0,.9)',
     marginTop: 2,
@@ -289,10 +289,8 @@ const S = {
     letterSpacing: 0.3,
   },
 
-  /* Scrollable knowledge cards area below cinema button */
+  /* Knowledge cards area — parent (leftCol) handles scrolling */
   cardsArea: {
-    flex: 1,
-    overflowY: 'auto',
     padding: '20px 28px 28px',
     display: 'flex',
     flexDirection: 'column',
@@ -892,7 +890,7 @@ export default function App() {
             <div style={S.subEn}>{activeSub.en}</div>
           )}
           {activeSub.zh && (
-            <div style={{ ...S.subZh, fontSize: 18 }}>{activeSub.zh}</div>
+            <div style={{ ...S.subZh, fontSize: 27 }}>{activeSub.zh}</div>
           )}
         </div>
       )}
