@@ -120,39 +120,64 @@ def deepseek_generate(prompt: str) -> str:
         raise
 
 
-def translate_batch(batch: list[dict], offset: int) -> list[str]:
-    """Translate one batch of subtitle dicts; returns list of zh strings."""
+def translate_batch(batch: list[dict], offset: int) -> dict:
+    """Translate one batch; returns {line_number: zh_string} dict.
+
+    Using a numbered JSON *object* (not array) so that even if the model
+    returns fewer items or reorders them, each translation maps back to the
+    correct subtitle via its explicit key.
+    """
     lines = "\n".join(
         f"{offset + i + 1}. {s['text'].strip()}" for i, s in enumerate(batch)
     )
     prompt = (
         "Please translate the following numbered English subtitle lines into Chinese. "
-        "Return ONLY a JSON array of strings in the same order, with no extra commentary.\n\n"
+        "Return ONLY a JSON object where each key is the line number (as a string) "
+        "and each value is the Chinese translation. "
+        "Example format: {\"1\": \"你好世界\", \"2\": \"如何工作\"}. "
+        "Do NOT include the number inside the value. No extra commentary.\n\n"
         f"{lines}"
     )
     raw = deepseek_generate(prompt)
+
+    def _strip_num(s: str) -> str:
+        """Remove any accidental leading number prefix like '316. '"""
+        return re.sub(r'^\d+[\.\s]+', '', str(s).strip())
+
     try:
-        return parse_json_response(raw)
+        parsed = parse_json_response(raw)
+        if isinstance(parsed, dict):
+            return {int(k): _strip_num(v) for k, v in parsed.items()}
+        if isinstance(parsed, list):
+            # Model returned array despite instructions — map positionally
+            return {offset + i + 1: _strip_num(v) for i, v in enumerate(parsed)}
     except (json.JSONDecodeError, ValueError):
-        return re.findall(r'"([^"]*)"', raw)
+        pass
+
+    # Last resort: scrape numbered lines from plain text
+    result = {}
+    for m in re.finditer(r'^(\d+)[.\s]+(.+)$', raw, re.MULTILINE):
+        result[int(m.group(1))] = _strip_num(m.group(2).strip('"'))
+    return result
 
 
 def translate_subtitles(subtitles: list[dict]) -> list[dict]:
     """Translate English subtitle entries to Chinese using DeepSeek (batched)."""
     BATCH_SIZE = 50
-    zh_lines: list[str] = []
+    zh_map: dict = {}  # {1-based line number → zh string}
 
     for i in range(0, len(subtitles), BATCH_SIZE):
         batch = subtitles[i:i + BATCH_SIZE]
-        zh_lines.extend(translate_batch(batch, i))
+        zh_map.update(translate_batch(batch, i))
 
     result = []
     for i, s in enumerate(subtitles):
+        line_num = i + 1
         result.append({
             "start": s["start"],
             "duration": s["duration"],
             "en": s["text"].strip(),
-            "zh": zh_lines[i] if i < len(zh_lines) else s["text"].strip(),
+            "zh": zh_map.get(line_num, s["text"].strip()),
         })
     return result
 
