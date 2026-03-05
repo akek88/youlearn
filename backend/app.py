@@ -257,7 +257,7 @@ def analyze():
 
 
 # ── Static file serving (production: Flask hosts the built frontend) ──
-DIST_DIR = os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist')
+DIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'frontend', 'dist')
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
@@ -268,5 +268,5 @@ def serve_frontend(path):
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
