@@ -1251,7 +1251,7 @@ export default function App() {
                 {!isFullscreen && activeSub && (
                   <div style={S.subtitleOverlay}>
                     {activeSub.en && <div style={S.subEn}>{activeSub.en}</div>}
-                    {activeSub.zh && <div style={S.subZh}>{activeSub.zh}</div>}
+                    {activeSub.zh && activeSub.zh !== activeSub.en && <div style={S.subZh}>{activeSub.zh}</div>}
                   </div>
                 )}
               </div>
@@ -1333,7 +1333,7 @@ export default function App() {
                         <span style={S.timelineTime}>{formatTime(s.start)}</span>
                         <div style={S.timelineTexts}>
                           {s.en && <div style={S.timelineEn(active)}>{s.en}</div>}
-                          {s.zh && <div style={S.timelineZh(active)}>{s.zh}</div>}
+                          {s.zh && s.zh !== s.en && <div style={S.timelineZh(active)}>{s.zh}</div>}
                         </div>
                       </div>
                     )
@@ -1364,7 +1364,7 @@ export default function App() {
           {activeSub.en && (
             <div style={S.subEn}>{activeSub.en}</div>
           )}
-          {activeSub.zh && (
+          {activeSub.zh && activeSub.zh !== activeSub.en && (
             <div style={{ ...S.subZh, fontSize: 27 }}>{activeSub.zh}</div>
           )}
         </div>

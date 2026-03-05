@@ -174,11 +174,17 @@ def translate_subtitles(subtitles: list[dict]) -> list[dict]:
     result = []
     for i, s in enumerate(subtitles):
         line_num = i + 1
+        en_text = s["text"].strip()
+        zh = zh_map.get(line_num, "")
+        # Guard: if translation missing or identical to English, leave zh blank
+        # so the UI never shows "double English" for an untranslated line.
+        if not zh or zh.strip() == en_text:
+            zh = ""
         result.append({
             "start": s["start"],
             "duration": s["duration"],
-            "en": s["text"].strip(),
-            "zh": zh_map.get(line_num, s["text"].strip()),
+            "en": en_text,
+            "zh": zh,
         })
     return result
 
