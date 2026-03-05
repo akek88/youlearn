@@ -644,13 +644,18 @@ export default function App() {
     }
   }, [activeIdx])
 
-  /* ── Fix 4: Fullscreen subtitle — body-level fixed overlay ── */
+  /* ── Fullscreen subtitle — body-level fixed overlay (standard + webkit) ── */
   useEffect(() => {
     const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement)
+      // document.webkitFullscreenElement covers Safari / iOS
+      setIsFullscreen(!!(document.fullscreenElement || document.webkitFullscreenElement))
     }
     document.addEventListener('fullscreenchange', handleFullscreenChange)
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
+    }
   }, [])
 
   /* ── Seek on timeline click ── */

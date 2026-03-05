@@ -101,6 +101,7 @@ def deepseek_generate(prompt: str) -> str:
         response = get_client().chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],
+            timeout=60.0,   # prevent infinite hang on slow/unresponsive API
         )
         return response.choices[0].message.content
     except AuthenticationError:
