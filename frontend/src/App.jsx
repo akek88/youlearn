@@ -124,17 +124,22 @@ const S = {
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
+    position: 'relative',          // anchor for SceneBg
   },
 
   /* Header */
   header: {
     padding: '16px 40px',
-    borderBottom: '1px solid #1e1e32',
+    borderBottom: '1px solid rgba(40,36,70,0.7)',
     display: 'flex',
     alignItems: 'center',
     gap: '14px',
-    background: 'linear-gradient(90deg,#0d0d1a 0%,#12102a 100%)',
+    background: 'rgba(7,6,18,0.88)',
+    backdropFilter: 'blur(16px)',
+    WebkitBackdropFilter: 'blur(16px)',
     flexShrink: 0,
+    position: 'relative',
+    zIndex: 2,
   },
   logoIcon: {
     width: 36,
@@ -165,9 +170,13 @@ const S = {
   /* Input area */
   inputSection: {
     padding: '20px 40px 16px',
-    borderBottom: '1px solid #1e1e32',
-    background: '#0d0d1a',
+    borderBottom: '1px solid rgba(40,36,70,0.6)',
+    background: 'rgba(8,7,20,0.85)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
     flexShrink: 0,
+    position: 'relative',
+    zIndex: 2,
   },
   inputRow: {
     display: 'flex',
@@ -248,6 +257,8 @@ const S = {
     color: '#3f3f5a',
     overflow: 'hidden',
     position: 'relative', // allows canvas + elements to layer correctly
+    zIndex: 1,
+    background: 'transparent', // let SceneBg show through
   },
   emptyIcon: {
     fontSize: 56,
@@ -281,6 +292,8 @@ const S = {
     overflow: 'hidden',
     animation: 'fadeIn .4s ease',
     minHeight: 0,
+    position: 'relative',
+    zIndex: 1,
   },
 
   /* Left column — scrollable so cards stay reachable after fullscreen */
@@ -288,9 +301,10 @@ const S = {
     flex: 1,
     display: 'flex',
     flexDirection: 'column',
-    borderRight: '1px solid #1e1e32',
+    borderRight: '1px solid rgba(40,36,70,0.55)',
     minWidth: 0,
     overflowY: 'auto',
+    background: 'rgba(5,4,14,0.72)',
   },
 
   /* Atmospheric backdrop that sits behind the player */
@@ -351,8 +365,10 @@ const S = {
     display: 'flex',
     justifyContent: 'flex-end',
     padding: '6px 12px',
-    background: '#0d0d1a',
-    borderBottom: '1px solid #1e1e32',
+    background: 'rgba(8,7,20,0.82)',
+    backdropFilter: 'blur(8px)',
+    WebkitBackdropFilter: 'blur(8px)',
+    borderBottom: '1px solid rgba(40,36,70,0.5)',
     flexShrink: 0,
   },
   cinemaBtn: {
@@ -387,7 +403,8 @@ const S = {
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
-    background: '#0a0a0f',
+    background: 'rgba(4,3,12,0.82)',
+    borderLeft: '1px solid rgba(40,36,70,0.45)',
   },
   timelineHeader: {
     padding: '12px 16px 8px',
@@ -469,8 +486,8 @@ const S = {
 
   /* Knowledge cards */
   card: {
-    background: '#13131f',
-    border: '1px solid #1e1e32',
+    background: 'rgba(16,13,28,0.88)',
+    border: '1px solid rgba(40,36,70,0.7)',
     borderRadius: 14,
     padding: '18px 20px',
   },
@@ -789,6 +806,130 @@ function AlienFigure() {
 }
 
 /* ─────────────────────────────────────────────
+   Full-app illustrated scene background
+   (night sky · painted clouds · mountains)
+───────────────────────────────────────────── */
+function SceneBg() {
+  // Deterministic star field — no randomness so no re-render flicker
+  const stars = Array.from({ length: 130 }, (_, i) => ({
+    cx: (i * 137.508) % 1180 + 10,
+    cy: (i * 97.31)   % 400  + 8,
+    r:  i % 9 === 0 ? 1.6 : i % 4 === 0 ? 1.1 : 0.65,
+    op: 0.18 + (i % 11) * 0.065,
+  }))
+  return (
+    <svg
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%',
+               pointerEvents: 'none', zIndex: 0 }}
+      viewBox="0 0 1200 700"
+      preserveAspectRatio="xMidYMid slice"
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient id="sc-sky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stopColor="#03030c" />
+          <stop offset="45%"  stopColor="#09071c" />
+          <stop offset="100%" stopColor="#11082a" />
+        </linearGradient>
+        <radialGradient id="sc-moon-glow" cx="78%" cy="13%" r="30%">
+          <stop offset="0%"   stopColor="rgba(255,210,140,0.20)" />
+          <stop offset="100%" stopColor="rgba(0,0,0,0)" />
+        </radialGradient>
+        <radialGradient id="sc-moon" cx="42%" cy="35%" r="60%">
+          <stop offset="0%"   stopColor="#fff9ee" />
+          <stop offset="55%"  stopColor="#fde8a8" />
+          <stop offset="100%" stopColor="#e8c060" />
+        </radialGradient>
+        <filter id="sc-blur-xl"><feGaussianBlur stdDeviation="18"/></filter>
+        <filter id="sc-blur-lg"><feGaussianBlur stdDeviation="10"/></filter>
+        <filter id="sc-blur-md"><feGaussianBlur stdDeviation="5"/></filter>
+        <linearGradient id="sc-fog" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stopColor="rgba(6,4,18,0)" />
+          <stop offset="100%" stopColor="rgba(3,3,10,0.97)" />
+        </linearGradient>
+      </defs>
+
+      {/* Sky */}
+      <rect width="1200" height="700" fill="url(#sc-sky)" />
+      {/* Ambient moon haze */}
+      <rect width="1200" height="700" fill="url(#sc-moon-glow)" />
+      {/* Moon disc */}
+      <circle cx="924" cy="94" r="46" fill="url(#sc-moon)" opacity="0.86" />
+      <circle cx="924" cy="94" r="58" fill="none" stroke="rgba(255,215,120,0.18)" strokeWidth="20" />
+
+      {/* Stars */}
+      {stars.map((s, i) => (
+        <circle key={i} cx={s.cx} cy={s.cy} r={s.r} fill="#fff" opacity={s.op} />
+      ))}
+
+      {/* ── Cloud cluster A — upper-right, warm amber/coral ── */}
+      <g filter="url(#sc-blur-xl)" opacity="0.52">
+        <ellipse cx="990"  cy="72"  rx="320" ry="155" fill="#b06240" />
+        <ellipse cx="1095" cy="50"  rx="240" ry="118" fill="#c87850" />
+        <ellipse cx="860"  cy="98"  rx="210" ry="105" fill="#9e5038" />
+        <ellipse cx="1155" cy="88"  rx="160" ry="82"  fill="#d49060" />
+      </g>
+      <g filter="url(#sc-blur-lg)" opacity="0.36">
+        <ellipse cx="1010" cy="55"  rx="230" ry="88"  fill="#d49070" />
+        <ellipse cx="1110" cy="38"  rx="170" ry="68"  fill="#e0a880" />
+      </g>
+
+      {/* ── Cloud cluster B — upper-left, mauve/violet ── */}
+      <g filter="url(#sc-blur-xl)" opacity="0.50">
+        <ellipse cx="295"  cy="125" rx="290" ry="132" fill="#6a3858" />
+        <ellipse cx="165"  cy="108" rx="205" ry="102" fill="#7c4870" />
+        <ellipse cx="440"  cy="152" rx="235" ry="102" fill="#58284a" />
+        <ellipse cx="55"   cy="148" rx="148" ry="72"  fill="#824078" />
+      </g>
+      <g filter="url(#sc-blur-lg)" opacity="0.32">
+        <ellipse cx="248"  cy="110" rx="185" ry="72"  fill="#9a6090" />
+        <ellipse cx="395"  cy="138" rx="155" ry="60"  fill="#8a5080" />
+      </g>
+
+      {/* ── Cloud cluster C — centre/right, soft pink wisps ── */}
+      <g filter="url(#sc-blur-xl)" opacity="0.32">
+        <ellipse cx="660"  cy="168" rx="330" ry="112" fill="#7a4870" />
+        <ellipse cx="770"  cy="142" rx="248" ry="88"  fill="#8a5880" />
+        <ellipse cx="540"  cy="190" rx="208" ry="82"  fill="#6a3860" />
+      </g>
+
+      {/* ── Mid-layer wispy band ── */}
+      <g filter="url(#sc-blur-md)" opacity="0.26">
+        <path d="M0,335 Q110,288 230,308 Q335,270 458,294 Q558,262 685,283
+                 Q788,258 908,276 Q1005,255 1110,272 L1200,308 L1200,365
+                 Q980,385 700,366 Q400,384 100,368 Z"
+              fill="#2c1830" />
+      </g>
+
+      {/* ── Mountains — left ── */}
+      {/* distant layer */}
+      <polygon points="0,700 0,438 65,368 138,308 218,360 296,422 340,700"
+               fill="#1c1032" opacity="0.88" />
+      {/* near layer */}
+      <polygon points="-8,700 42,478 118,390 198,328 278,386 368,462 428,700"
+               fill="#110820" />
+      {/* rocky foreground */}
+      <polygon points="0,700 0,524 36,476 88,442 148,472 188,514 240,700"
+               fill="#09050e" />
+
+      {/* ── Mountains — right ── */}
+      {/* distant layer */}
+      <polygon points="1200,700 1200,418 1138,352 1065,296 984,352 902,418 862,700"
+               fill="#1c1032" opacity="0.88" />
+      {/* near layer */}
+      <polygon points="1208,700 1158,462 1086,378 1006,312 924,378 842,458 788,700"
+               fill="#110820" />
+      {/* rocky foreground */}
+      <polygon points="1200,700 1200,508 1168,458 1118,428 1058,456 1018,502 968,700"
+               fill="#09050e" />
+
+      {/* ── Bottom fog ── */}
+      <rect x="0" y="515" width="1200" height="185" fill="url(#sc-fog)" />
+    </svg>
+  )
+}
+
+/* ─────────────────────────────────────────────
    Components
 ───────────────────────────────────────────── */
 function KnowledgeCard({ icon, title, children }) {
@@ -1000,6 +1141,9 @@ export default function App() {
   /* ─────── Render ─────── */
   return (
     <div style={S.app}>
+
+      {/* ── Illustrated landscape background (always visible) ── */}
+      <SceneBg />
 
       {/* ── Header ── */}
       <header style={S.header}>
