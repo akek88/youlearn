@@ -315,7 +315,15 @@ def analyze():
         err = str(e).lower()
         if "timeout" in err or "timed out" in err:
             return jsonify({"error": "字幕提取超时，请重试"}), 504
-        return jsonify({"error": f"字幕提取失败：{str(e)}"}), 500
+        # Video unavailable / deleted / private / age-restricted → 422 with clean message
+        unavailable_keywords = [
+            "no longer available", "unavailable", "private", "does not exist",
+            "video unavailable", "not available", "removed", "age-restricted",
+        ]
+        if any(kw in err for kw in unavailable_keywords):
+            return jsonify({"error": "该视频不可用（可能已删除、设为私密或受年龄限制）"}), 422
+        # Generic transcript error — return a short clean message, not the raw exception
+        return jsonify({"error": "字幕提取失败，请确认视频存在且有字幕"}), 422
 
     # Steps 3 + 4: Translation and analysis run CONCURRENTLY ─────────────────
     #
