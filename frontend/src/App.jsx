@@ -38,6 +38,44 @@ const globalCSS = `
     0%, 100% { opacity: 1; }
     50%       { opacity: 0.4; }
   }
+
+  /* ── Metro timeline vertical track ── */
+  .timeline-track { position: relative; }
+  .timeline-track::before {
+    content: '';
+    position: absolute;
+    left: 23px;
+    top: 0; bottom: 0;
+    width: 2px;
+    background: linear-gradient(
+      to bottom,
+      transparent 0px,
+      #1e1e30 28px,
+      #1e1e30 calc(100% - 28px),
+      transparent 100%
+    );
+    pointer-events: none;
+  }
+
+  /* ── Gradient scrollbar (timeline) ── */
+  .timeline-scroll::-webkit-scrollbar { width: 5px; }
+  .timeline-scroll::-webkit-scrollbar-track { background: #06060e; }
+  .timeline-scroll::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #14b8a6 0%, #7c3aed 50%, #d97706 100%);
+    border-radius: 3px;
+    min-height: 48px;
+  }
+  .timeline-scroll::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, #2dd4bf 0%, #a78bfa 50%, #fbbf24 100%);
+  }
+
+  /* ── Active dot ripple ── */
+  @keyframes ripple {
+    0%   { box-shadow: 0 0 8px rgba(124,58,237,.7), 0 0 0 0   rgba(124,58,237,.5); }
+    70%  { box-shadow: 0 0 8px rgba(124,58,237,.7), 0 0 0 7px rgba(124,58,237,0);  }
+    100% { box-shadow: 0 0 8px rgba(124,58,237,.7), 0 0 0 0   rgba(124,58,237,0);  }
+  }
+  .dot-active { animation: ripple 1.8s ease-out infinite; }
 `
 const styleTag = document.createElement('style')
 styleTag.textContent = globalCSS
@@ -220,13 +258,23 @@ const S = {
     overflowY: 'auto',
   },
 
-  /* Sticky player area — never scrolls */
+  /* Atmospheric backdrop that sits behind the player */
+  playerGlowWrap: {
+    flexShrink: 0,
+    padding: '14px 14px 0',
+    background: 'radial-gradient(ellipse 110% 170% at 50% -10%, rgba(109,40,217,0.22) 0%, rgba(79,70,229,0.09) 38%, #0a0a0f 65%)',
+  },
+
+  /* Sticky player area — sits inside playerGlowWrap */
   playerWrapper: {
     position: 'relative',
     width: '100%',
     aspectRatio: '16/9',
     background: '#000',
-    flexShrink: 0,
+    borderRadius: 10,
+    overflow: 'hidden',
+    border: '1px solid rgba(124,58,237,0.24)',
+    boxShadow: '0 0 48px rgba(124,58,237,0.22), 0 8px 36px rgba(0,0,0,0.75)',
   },
   playerIframe: {
     position: 'absolute',
@@ -324,13 +372,41 @@ const S = {
   },
   timelineItem: (active) => ({
     display: 'flex',
-    gap: 10,
-    padding: '7px 16px',
+    gap: 8,
+    padding: '5px 16px',
     cursor: 'pointer',
-    borderLeft: active ? '3px solid #7c3aed' : '3px solid transparent',
-    background: active ? 'rgba(124,58,237,.08)' : 'transparent',
+    background: active ? 'rgba(124,58,237,.07)' : 'transparent',
     transition: 'background .15s',
+    position: 'relative',
+    zIndex: 1,
+    alignItems: 'flex-start',
   }),
+
+  /* Fixed-width column that keeps dots centred on the track line */
+  dotWrap: {
+    width: 16,
+    flexShrink: 0,
+    display: 'flex',
+    justifyContent: 'center',
+    paddingTop: 4,
+    position: 'relative',
+    zIndex: 2,
+  },
+
+  /* Dot colour/size changes with position relative to active subtitle */
+  timelineDot: (state) => ({
+    width:  state === 'active' ? 12 : state === 'past' ? 8 : 7,
+    height: state === 'active' ? 12 : state === 'past' ? 8 : 7,
+    borderRadius: '50%',
+    flexShrink: 0,
+    transition: 'all .3s ease',
+    background:
+      state === 'active' ? 'radial-gradient(circle, #c4b5fd 10%, #7c3aed 80%)'
+      : state === 'past'  ? '#14b8a6'
+      :                     '#252538',
+    border: state === 'active' ? '1.5px solid rgba(196,181,253,.7)' : 'none',
+  }),
+
   timelineTime: {
     fontFamily: "'Space Mono', monospace",
     fontSize: 11,
@@ -785,16 +861,21 @@ export default function App() {
             borderRight: cinemaMode ? 'none' : '1px solid #1e1e32',
           }}>
 
-            {/* Video player — subtitle overlay stays inside, never leaves */}
-            <div style={S.playerWrapper}>
-              <div id="yt-player" style={S.playerIframe} />
-              {/* Normal (non-fullscreen) subtitle overlay */}
-              {!isFullscreen && activeSub && (
-                <div style={S.subtitleOverlay}>
-                  {activeSub.en && <div style={S.subEn}>{activeSub.en}</div>}
-                  {activeSub.zh && <div style={S.subZh}>{activeSub.zh}</div>}
-                </div>
-              )}
+            {/* Ambient glow backdrop + video player */}
+            <div style={cinemaMode
+              ? { ...S.playerGlowWrap, padding: '10px 0 0' }
+              : S.playerGlowWrap
+            }>
+              <div style={S.playerWrapper}>
+                <div id="yt-player" style={S.playerIframe} />
+                {/* Normal (non-fullscreen) subtitle overlay */}
+                {!isFullscreen && activeSub && (
+                  <div style={S.subtitleOverlay}>
+                    {activeSub.en && <div style={S.subEn}>{activeSub.en}</div>}
+                    {activeSub.zh && <div style={S.subZh}>{activeSub.zh}</div>}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Fix 3: Cinema Mode button — sits BELOW playerWrapper, outside iframe */}
@@ -850,25 +931,35 @@ export default function App() {
           {!cinemaMode && (
             <div style={S.rightCol}>
               <div style={S.timelineHeader}>字幕时间轴</div>
-              {/* Fix 2: this div is the only thing that scrolls */}
-              <div style={S.timelineScroll} ref={timelineScrollRef}>
-                {result.subtitles.map((s, i) => {
-                  const active = i === activeIdx
-                  return (
-                    <div
-                      key={i}
-                      ref={active ? activeItemRef : null}
-                      style={S.timelineItem(active)}
-                      onClick={() => seekTo(s.start)}
-                    >
-                      <span style={S.timelineTime}>{formatTime(s.start)}</span>
-                      <div style={S.timelineTexts}>
-                        {s.en && <div style={S.timelineEn(active)}>{s.en}</div>}
-                        {s.zh && <div style={S.timelineZh(active)}>{s.zh}</div>}
+              {/* Metro-line timeline — only this div scrolls */}
+              <div style={S.timelineScroll} ref={timelineScrollRef} className="timeline-scroll">
+                <div className="timeline-track">
+                  {result.subtitles.map((s, i) => {
+                    const active = i === activeIdx
+                    const dotState = active ? 'active' : (i < activeIdx ? 'past' : 'future')
+                    return (
+                      <div
+                        key={i}
+                        ref={active ? activeItemRef : null}
+                        style={S.timelineItem(active)}
+                        onClick={() => seekTo(s.start)}
+                      >
+                        {/* Metro node */}
+                        <div style={S.dotWrap}>
+                          <div
+                            style={S.timelineDot(dotState)}
+                            className={active ? 'dot-active' : ''}
+                          />
+                        </div>
+                        <span style={S.timelineTime}>{formatTime(s.start)}</span>
+                        <div style={S.timelineTexts}>
+                          {s.en && <div style={S.timelineEn(active)}>{s.en}</div>}
+                          {s.zh && <div style={S.timelineZh(active)}>{s.zh}</div>}
+                        </div>
                       </div>
-                    </div>
-                  )
-                })}
+                    )
+                  })}
+                </div>
               </div>
             </div>
           )}
