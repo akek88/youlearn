@@ -1,11 +1,19 @@
-* {
+/* Critical styles loaded before React JS — prevents flash of white/gray.
+   The full theme is also applied in App.jsx's globalCSS (injected at runtime);
+   this file ensures the correct dark background shows *immediately* on first paint. */
+
+*, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
-body {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  background-color: #f5f5f5;
-  color: #333;
+html, body, #root {
+  height: 100%;
+  background: #0a0a0f;
+  color: #e2e2f0;
+  font-family: 'Noto Sans SC', sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
 }
