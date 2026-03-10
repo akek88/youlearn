@@ -558,6 +558,140 @@ const S = {
     fontSize: 13,
     flexShrink: 0,
   },
+
+  /* ── Watch History panel ── */
+  historyBtn: {
+    marginLeft: 'auto',
+    background: 'rgba(124,58,237,0.15)',
+    border: '1px solid rgba(124,58,237,0.32)',
+    color: '#a78bfa',
+    borderRadius: 8,
+    padding: '6px 14px',
+    cursor: 'pointer',
+    fontFamily: "'Space Mono', monospace",
+    fontSize: 12,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
+    transition: 'background .2s',
+  },
+  historyBadge: {
+    background: '#7c3aed',
+    color: '#fff',
+    borderRadius: 10,
+    padding: '1px 7px',
+    fontSize: 10,
+    fontFamily: "'Space Mono', monospace",
+    fontWeight: 700,
+  },
+  historyOverlay: {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 200,
+    background: 'rgba(0,0,0,0.5)',
+    backdropFilter: 'blur(3px)',
+    WebkitBackdropFilter: 'blur(3px)',
+  },
+  historyPanel: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 380,
+    background: 'rgba(8,7,20,0.98)',
+    borderLeft: '1px solid rgba(124,58,237,0.28)',
+    backdropFilter: 'blur(24px)',
+    WebkitBackdropFilter: 'blur(24px)',
+    display: 'flex',
+    flexDirection: 'column',
+    boxShadow: '-12px 0 60px rgba(0,0,0,0.7)',
+  },
+  historyPanelHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '18px 20px',
+    borderBottom: '1px solid rgba(40,36,70,0.55)',
+    color: '#e2e2f0',
+    fontFamily: "'Space Mono', monospace",
+    fontSize: 14,
+    flexShrink: 0,
+  },
+  historyClose: {
+    background: 'none',
+    border: 'none',
+    color: '#6b6b8d',
+    cursor: 'pointer',
+    fontSize: 18,
+    lineHeight: 1,
+    padding: 4,
+  },
+  historyList: {
+    flex: 1,
+    overflowY: 'auto',
+    padding: '4px 0',
+  },
+  historyEmpty: {
+    textAlign: 'center',
+    color: '#6b6b8d',
+    padding: '64px 24px',
+    fontSize: 14,
+    fontFamily: "'Space Mono', monospace",
+    lineHeight: 2,
+  },
+  historyItem: {
+    display: 'flex',
+    gap: 12,
+    padding: '12px 16px',
+    cursor: 'pointer',
+    borderBottom: '1px solid rgba(40,36,70,0.35)',
+    transition: 'background .15s',
+  },
+  historyThumb: {
+    width: 104,
+    height: 58,
+    borderRadius: 6,
+    objectFit: 'cover',
+    flexShrink: 0,
+    background: '#13131f',
+  },
+  historyInfo: {
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    gap: 5,
+    minWidth: 0,
+    flex: 1,
+  },
+  historyTitle: {
+    color: '#dbd8f5',
+    fontSize: 13,
+    lineHeight: 1.45,
+    overflow: 'hidden',
+    display: '-webkit-box',
+    WebkitLineClamp: 2,
+    WebkitBoxOrient: 'vertical',
+  },
+  historyDate: {
+    color: '#6b6b8d',
+    fontSize: 11,
+    fontFamily: "'Space Mono', monospace",
+  },
+  historyClearBtn: {
+    margin: '10px 16px 16px',
+    padding: '9px 0',
+    borderRadius: 8,
+    cursor: 'pointer',
+    fontSize: 13,
+    background: 'rgba(239,68,68,0.08)',
+    border: '1px solid rgba(239,68,68,0.22)',
+    color: '#f87171',
+    fontFamily: "'Space Mono', monospace",
+    width: 'calc(100% - 32px)',
+    flexShrink: 0,
+    transition: 'background .2s',
+  },
 }
 
 /* ─────────────────────────────────────────────
@@ -611,6 +745,40 @@ function exportNotes(analysis, videoId, videoUrl) {
   a.download = `youlearn_笔记_${videoId}_${dateStr}.md`
   a.click()
   URL.revokeObjectURL(blobUrl)
+}
+
+/* ─────────────────────────────────────────────
+   Watch history — localStorage helpers
+───────────────────────────────────────────── */
+const HISTORY_KEY = 'youlearn_history'
+const HISTORY_MAX = 20
+
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]') }
+  catch { return [] }
+}
+
+function saveHistory(videoId, videoUrl, theme) {
+  const entries = loadHistory().filter(e => e.videoId !== videoId)
+  entries.unshift({ videoId, url: videoUrl, theme, watchedAt: new Date().toISOString() })
+  if (entries.length > HISTORY_MAX) entries.length = HISTORY_MAX
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(entries))
+}
+
+function clearHistory() {
+  localStorage.removeItem(HISTORY_KEY)
+}
+
+function formatTheme(theme = '') {
+  const parts = theme.split(' / ')
+  const title = parts.length > 1 ? parts.slice(1).join(' / ') : theme
+  return title.length > 65 ? title.slice(0, 62) + '…' : title || 'Untitled'
+}
+
+function formatWatchDate(iso) {
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+  } catch { return '' }
 }
 
 /* ─────────────────────────────────────────────
@@ -971,12 +1139,18 @@ export default function App() {
   const [cinemaMode, setCinemaMode] = useState(false)
   // Fix 4: track whether we're in native fullscreen
   const [isFullscreen, setIsFullscreen] = useState(false)
+  // Watch history
+  const [showHistory, setShowHistory] = useState(false)
+  const [historyEntries, setHistoryEntries] = useState([])
 
   const playerRef = useRef(null)
   const pollRef = useRef(null)
   const progressRef = useRef(null)
   const timelineScrollRef = useRef(null)
   const activeItemRef = useRef(null)
+
+  /* ── Load watch history from localStorage ── */
+  useEffect(() => { setHistoryEntries(loadHistory()) }, [])
 
   /* ── YouTube IFrame API ── */
   useEffect(() => {
@@ -1109,9 +1283,9 @@ export default function App() {
     }
   }
 
-  /* ── Analyze ── */
-  const handleAnalyze = async () => {
-    if (!url.trim() || status === 'loading') return
+  /* ── Analyze (accepts explicit URL to avoid stale-closure issues from history replay) ── */
+  const handleAnalyzeWith = async (targetUrl) => {
+    if (!targetUrl.trim() || status === 'loading') return
     setStatus('loading')
     setErrorMsg('')
     setResult(null)
@@ -1124,17 +1298,22 @@ export default function App() {
       const res = await fetch(`${API_URL}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim() }),
+        body: JSON.stringify({ url: targetUrl.trim() }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
       setResult(data)
       setStatus('done')
+      // Persist to watch history so the user can replay without re-pasting
+      saveHistory(data.videoId, targetUrl.trim(), data.analysis?.theme || '')
+      setHistoryEntries(loadHistory())
     } catch (e) {
       setErrorMsg(e.message)
       setStatus('error')
     }
   }
+
+  const handleAnalyze = () => handleAnalyzeWith(url)
 
   const activeSub = activeIdx >= 0 ? result?.subtitles?.[activeIdx] : null
 
@@ -1152,6 +1331,17 @@ export default function App() {
           <div style={S.logoText}>YouLearn</div>
           <div style={S.headerSub}>将任意 YouTube 视频转化为结构化知识</div>
         </div>
+        <button
+          style={S.historyBtn}
+          onClick={() => setShowHistory(h => !h)}
+          onMouseEnter={e => e.currentTarget.style.background = 'rgba(124,58,237,0.28)'}
+          onMouseLeave={e => e.currentTarget.style.background = 'rgba(124,58,237,0.15)'}
+        >
+          🕐 历史记录
+          {historyEntries.length > 0 && (
+            <span style={S.historyBadge}>{historyEntries.length}</span>
+          )}
+        </button>
       </header>
 
       {/* ── Input area ── */}
@@ -1343,6 +1533,69 @@ export default function App() {
             </div>
           )}
 
+        </div>
+      )}
+
+      {/* ── Watch History panel (slides in from right) ── */}
+      {showHistory && (
+        <div style={S.historyOverlay} onClick={() => setShowHistory(false)}>
+          <div style={S.historyPanel} onClick={e => e.stopPropagation()}>
+
+            {/* Panel header */}
+            <div style={S.historyPanelHeader}>
+              <span>🕐 观看历史</span>
+              <button style={S.historyClose} onClick={() => setShowHistory(false)}>✕</button>
+            </div>
+
+            {/* Empty state */}
+            {historyEntries.length === 0 && (
+              <div style={S.historyEmpty}>
+                暂无历史记录<br />
+                <span style={{ fontSize: 12, opacity: 0.55 }}>分析视频后将自动保存在这里</span>
+              </div>
+            )}
+
+            {/* History list */}
+            <div style={S.historyList}>
+              {historyEntries.map((entry) => (
+                <div
+                  key={entry.videoId}
+                  style={S.historyItem}
+                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(124,58,237,0.1)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  onClick={() => {
+                    setUrl(entry.url)
+                    setShowHistory(false)
+                    // setTimeout avoids stale closure — url state is set, then analyze fires
+                    setTimeout(() => handleAnalyzeWith(entry.url), 0)
+                  }}
+                >
+                  <img
+                    src={`https://img.youtube.com/vi/${entry.videoId}/mqdefault.jpg`}
+                    style={S.historyThumb}
+                    alt=""
+                  />
+                  <div style={S.historyInfo}>
+                    <div style={S.historyTitle}>{formatTheme(entry.theme)}</div>
+                    <div style={S.historyDate}>{formatWatchDate(entry.watchedAt)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Clear all button */}
+            {historyEntries.length > 0 && (
+              <button
+                style={S.historyClearBtn}
+                onClick={() => { clearHistory(); setHistoryEntries([]) }}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.18)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'rgba(239,68,68,0.08)'}
+              >
+                🗑 清空历史记录
+              </button>
+            )}
+
+          </div>
         </div>
       )}
 
