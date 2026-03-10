@@ -184,15 +184,19 @@ def translate_batch(batch: list[dict], offset: int) -> dict:
 
 
 def translate_subtitles(subtitles: list[dict]) -> list[dict]:
-    """Translate English subtitles to Chinese — all batches fire in parallel.
+    """Translate English subtitles to Chinese — parallel batches + retry pass for gaps.
 
-    Speedup vs sequential:
-      500 subtitles / 100 per batch = 5 batches
-      Sequential:  5 × ~20 s = ~100 s
-      Parallel:    max(~20 s) =  ~20 s   → ~5× faster
+    Two-phase strategy:
+      Phase 1 – Fire all batches in parallel (lower concurrency to avoid rate limits).
+                 BATCH_SIZE=50 keeps prompts short so the model rarely skips lines.
+                 MAX_WORKERS=5 avoids DeepSeek rate-limit errors that silently drop
+                 entire batches.
+      Phase 2 – Collect every line number absent from zh_map and re-translate in
+                 fresh batches using the actual original line numbers as keys, so the
+                 returned JSON maps directly back without positional ambiguity.
     """
-    BATCH_SIZE = 100          # larger batches = fewer round-trips
-    MAX_WORKERS = 10          # up to 10 concurrent DeepSeek requests
+    BATCH_SIZE = 50           # smaller → model skips fewer lines per prompt
+    MAX_WORKERS = 5           # lower → less risk of DeepSeek rate-limiting
 
     batches = [
         (i, subtitles[i:i + BATCH_SIZE])
@@ -209,10 +213,58 @@ def translate_subtitles(subtitles: list[dict]) -> list[dict]:
             try:
                 zh_map.update(future.result())
             except Exception:
-                # Batch failed — those lines will simply have empty zh.
-                # The frontend guard already handles missing translations.
-                pass
+                pass  # batch failed; missing lines caught by retry pass below
 
+    # ── Retry pass ────────────────────────────────────────────────────────────
+    # Any line number absent from zh_map gets re-sent using its *actual* 1-based
+    # line number so the returned JSON keys always match zh_map keys exactly.
+
+    def _strip_num_retry(s: str) -> str:
+        """Remove accidental leading number prefix like '48. '."""
+        return re.sub(r'^\d+[\.\s]+', '', str(s).strip())
+
+    def _parse_retry_response(raw: str, chunk: list) -> dict:
+        """Parse retry API response into {line_num: zh_text} dict."""
+        try:
+            parsed = parse_json_response(raw)
+            if isinstance(parsed, dict):
+                return {int(k): _strip_num_retry(v) for k, v in parsed.items()}
+            if isinstance(parsed, list):
+                return {chunk[j][0]: _strip_num_retry(v)
+                        for j, v in enumerate(parsed) if j < len(chunk)}
+        except (json.JSONDecodeError, ValueError):
+            pass
+        # Last resort: scrape numbered lines from plain text
+        result = {}
+        for m in re.finditer(r'^(\d+)[.\s]+(.+)$', raw, re.MULTILINE):
+            result[int(m.group(1))] = _strip_num_retry(m.group(2).strip('"'))
+        return result
+
+    missing = [
+        (i + 1, subtitles[i]["text"].strip())
+        for i in range(len(subtitles))
+        if (i + 1) not in zh_map
+    ]
+
+    if missing:
+        for chunk_start in range(0, len(missing), BATCH_SIZE):
+            chunk = missing[chunk_start:chunk_start + BATCH_SIZE]
+            lines = "\n".join(f"{ln}. {text}" for ln, text in chunk)
+            prompt = (
+                "Please translate the following numbered English subtitle lines into Chinese. "
+                "Return ONLY a JSON object where each key is the line number (as a string) "
+                "and each value is the Chinese translation. "
+                "Example format: {\"1\": \"你好世界\", \"2\": \"如何工作\"}. "
+                "Do NOT include the number inside the value. No extra commentary.\n\n"
+                f"{lines}"
+            )
+            try:
+                raw = deepseek_generate(prompt)
+                zh_map.update(_parse_retry_response(raw, chunk))
+            except Exception:
+                pass  # accept empty zh for lines that still can't be translated
+
+    # ── Build final result ────────────────────────────────────────────────────
     result = []
     for i, s in enumerate(subtitles):
         line_num = i + 1
