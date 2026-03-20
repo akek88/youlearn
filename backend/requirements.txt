@@ -3,3 +3,4 @@ flask-cors==5.0.0
 youtube-transcript-api==1.2.4
 openai==2.24.0
 python-dotenv==1.0.1
+psycopg2-binary==2.9.9

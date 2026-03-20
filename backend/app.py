@@ -3,6 +3,7 @@ import re
 import json
 import socket
 import threading
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -14,6 +15,35 @@ load_dotenv(override=True)
 
 app = Flask(__name__)
 CORS(app, origins="*")
+
+# ── History DB (PostgreSQL via Railway DATABASE_URL) ─────────────────────────
+import psycopg2
+import psycopg2.extras
+
+_DB_URL = os.getenv("DATABASE_URL", "")
+
+def _db():
+    conn = psycopg2.connect(_DB_URL)
+    return conn
+
+def _init_db():
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS history (
+                    user_id    TEXT NOT NULL,
+                    video_id   TEXT NOT NULL,
+                    url        TEXT NOT NULL,
+                    theme      TEXT NOT NULL DEFAULT '',
+                    watched_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, video_id)
+                )
+            ''')
+        conn.commit()
+
+if _DB_URL:
+    _init_db()
+
 
 # ── In-memory result cache (video_id → full response dict) ──────────────────
 # Survives for the lifetime of the process; cleared on redeploy.
@@ -334,6 +364,63 @@ def analyze_transcript(subtitles: list[dict]) -> dict:
             "insights": [],
             "further": [],
         }
+
+
+@app.route("/api/history", methods=["GET", "POST", "DELETE"])
+def history_route():
+    if not _DB_URL:
+        return jsonify([]) if request.method == "GET" else jsonify({"ok": True})
+
+    if request.method == "GET":
+        user_id = request.args.get("user_id", "").strip()
+        if not user_id:
+            return jsonify([])
+        with _db() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT video_id, url, theme, watched_at FROM history "
+                    "WHERE user_id = %s ORDER BY watched_at DESC LIMIT 20",
+                    (user_id,)
+                )
+                rows = cur.fetchall()
+        return jsonify([
+            {"videoId": r["video_id"], "url": r["url"],
+             "theme": r["theme"], "watchedAt": r["watched_at"]}
+            for r in rows
+        ])
+
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        user_id  = data.get("user_id",  "").strip()
+        video_id = data.get("video_id", "").strip()
+        url      = data.get("url",      "").strip()
+        theme    = data.get("theme",    "").strip()
+        if not user_id or not video_id:
+            return jsonify({"error": "Missing user_id or video_id"}), 400
+        now = datetime.now(timezone.utc).isoformat()
+        with _db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    '''INSERT INTO history (user_id, video_id, url, theme, watched_at)
+                       VALUES (%s, %s, %s, %s, %s)
+                       ON CONFLICT (user_id, video_id) DO UPDATE SET
+                           url        = EXCLUDED.url,
+                           theme      = EXCLUDED.theme,
+                           watched_at = EXCLUDED.watched_at''',
+                    (user_id, video_id, url, theme, now)
+                )
+            conn.commit()
+        return jsonify({"ok": True})
+
+    # DELETE
+    user_id = request.args.get("user_id", "").strip()
+    if not user_id:
+        return jsonify({"error": "Missing user_id"}), 400
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM history WHERE user_id = %s", (user_id,))
+        conn.commit()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/analyze", methods=["POST"])

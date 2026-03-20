@@ -692,6 +692,73 @@ const S = {
     flexShrink: 0,
     transition: 'background .2s',
   },
+  syncSection: {
+    padding: '12px 16px',
+    borderTop: '1px solid rgba(40,36,70,0.55)',
+    flexShrink: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+  },
+  syncLabel: {
+    fontSize: 11,
+    color: '#6b6b8d',
+    fontFamily: "'Space Mono', monospace",
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
+  },
+  syncRow: {
+    display: 'flex',
+    gap: 6,
+    alignItems: 'center',
+  },
+  syncCode: {
+    flex: 1,
+    fontSize: 11,
+    fontFamily: "'Space Mono', monospace",
+    color: '#a0a0c0',
+    background: 'rgba(124,58,237,0.08)',
+    border: '1px solid rgba(124,58,237,0.2)',
+    borderRadius: 6,
+    padding: '5px 8px',
+    overflow: 'hidden',
+    whiteSpace: 'nowrap',
+    textOverflow: 'ellipsis',
+  },
+  syncCopyBtn: {
+    padding: '5px 10px',
+    borderRadius: 6,
+    border: '1px solid rgba(124,58,237,0.3)',
+    background: 'rgba(124,58,237,0.12)',
+    color: '#a78bfa',
+    fontSize: 11,
+    fontFamily: "'Space Mono', monospace",
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
+  },
+  syncInput: {
+    flex: 1,
+    padding: '5px 8px',
+    borderRadius: 6,
+    border: '1px solid rgba(40,36,70,0.7)',
+    background: 'rgba(255,255,255,0.04)',
+    color: '#dbd8f5',
+    fontSize: 11,
+    fontFamily: "'Space Mono', monospace",
+    outline: 'none',
+  },
+  syncApplyBtn: {
+    padding: '5px 10px',
+    borderRadius: 6,
+    border: '1px solid rgba(124,58,237,0.3)',
+    background: 'rgba(124,58,237,0.18)',
+    color: '#a78bfa',
+    fontSize: 11,
+    fontFamily: "'Space Mono', monospace",
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
 }
 
 /* ─────────────────────────────────────────────
@@ -748,25 +815,39 @@ function exportNotes(analysis, videoId, videoUrl) {
 }
 
 /* ─────────────────────────────────────────────
-   Watch history — localStorage helpers
+   Watch history — synced via backend API
 ───────────────────────────────────────────── */
-const HISTORY_KEY = 'youlearn_history'
-const HISTORY_MAX = 20
+const HISTORY_USER_KEY = 'youlearn_user_id'
+const _API = import.meta.env.VITE_API_URL || ''
 
-function loadHistory() {
-  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]') }
-  catch { return [] }
+function getUserId() {
+  let id = localStorage.getItem(HISTORY_USER_KEY)
+  if (!id) { id = crypto.randomUUID(); localStorage.setItem(HISTORY_USER_KEY, id) }
+  return id
 }
 
-function saveHistory(videoId, videoUrl, theme) {
-  const entries = loadHistory().filter(e => e.videoId !== videoId)
-  entries.unshift({ videoId, url: videoUrl, theme, watchedAt: new Date().toISOString() })
-  if (entries.length > HISTORY_MAX) entries.length = HISTORY_MAX
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(entries))
+async function loadHistory() {
+  try {
+    const res = await fetch(`${_API}/api/history?user_id=${encodeURIComponent(getUserId())}`)
+    if (!res.ok) return []
+    return await res.json()
+  } catch { return [] }
 }
 
-function clearHistory() {
-  localStorage.removeItem(HISTORY_KEY)
+async function saveHistory(videoId, videoUrl, theme) {
+  try {
+    await fetch(`${_API}/api/history`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: getUserId(), video_id: videoId, url: videoUrl, theme }),
+    })
+  } catch {}
+}
+
+async function clearHistory() {
+  try {
+    await fetch(`${_API}/api/history?user_id=${encodeURIComponent(getUserId())}`, { method: 'DELETE' })
+  } catch {}
 }
 
 function formatTheme(theme = '') {
@@ -1142,6 +1223,9 @@ export default function App() {
   // Watch history
   const [showHistory, setShowHistory] = useState(false)
   const [historyEntries, setHistoryEntries] = useState([])
+  const [userId, setUserId] = useState(() => getUserId())
+  const [syncInput, setSyncInput] = useState('')
+  const [syncCopied, setSyncCopied] = useState(false)
 
   const playerRef = useRef(null)
   const pollRef = useRef(null)
@@ -1149,8 +1233,8 @@ export default function App() {
   const timelineScrollRef = useRef(null)
   const activeItemRef = useRef(null)
 
-  /* ── Load watch history from localStorage ── */
-  useEffect(() => { setHistoryEntries(loadHistory()) }, [])
+  /* ── Load watch history from backend ── */
+  useEffect(() => { loadHistory().then(setHistoryEntries) }, [])
 
   /* ── YouTube IFrame API ── */
   useEffect(() => {
@@ -1305,8 +1389,8 @@ export default function App() {
       setResult(data)
       setStatus('done')
       // Persist to watch history so the user can replay without re-pasting
-      saveHistory(data.videoId, targetUrl.trim(), data.analysis?.theme || '')
-      setHistoryEntries(loadHistory())
+      await saveHistory(data.videoId, targetUrl.trim(), data.analysis?.theme || '')
+      setHistoryEntries(await loadHistory())
     } catch (e) {
       setErrorMsg(e.message)
       setStatus('error')
@@ -1583,11 +1667,46 @@ export default function App() {
               ))}
             </div>
 
+            {/* Sync code section */}
+            <div style={S.syncSection}>
+              <div style={S.syncLabel}>📱 Cross-Device Sync</div>
+              <div style={S.syncRow}>
+                <span style={S.syncCode} title={userId}>{userId.slice(0, 18)}…</span>
+                <button
+                  style={S.syncCopyBtn}
+                  onClick={() => {
+                    navigator.clipboard.writeText(userId)
+                    setSyncCopied(true)
+                    setTimeout(() => setSyncCopied(false), 2000)
+                  }}
+                >{syncCopied ? '✓ Copied' : 'Copy Code'}</button>
+              </div>
+              <div style={S.syncRow}>
+                <input
+                  style={S.syncInput}
+                  placeholder="Paste code from another device…"
+                  value={syncInput}
+                  onChange={e => setSyncInput(e.target.value)}
+                />
+                <button
+                  style={S.syncApplyBtn}
+                  onClick={async () => {
+                    const code = syncInput.trim()
+                    if (!code) return
+                    localStorage.setItem(HISTORY_USER_KEY, code)
+                    setUserId(code)
+                    setSyncInput('')
+                    setHistoryEntries(await loadHistory())
+                  }}
+                >Apply</button>
+              </div>
+            </div>
+
             {/* Clear all button */}
             {historyEntries.length > 0 && (
               <button
                 style={S.historyClearBtn}
-                onClick={() => { clearHistory(); setHistoryEntries([]) }}
+                onClick={async () => { await clearHistory(); setHistoryEntries([]) }}
                 onMouseEnter={e => e.currentTarget.style.background = 'rgba(239,68,68,0.18)'}
                 onMouseLeave={e => e.currentTarget.style.background = 'rgba(239,68,68,0.08)'}
               >
