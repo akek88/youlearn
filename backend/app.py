@@ -97,8 +97,14 @@ def snippets_to_dicts(snippets) -> list[dict]:
 
 
 def _make_transcript_api() -> YouTubeTranscriptApi:
-    """Return a YouTubeTranscriptApi instance, using YouTube cookies if available."""
+    """Return a YouTubeTranscriptApi instance, injecting YouTube cookies if available."""
+    from requests import Session
+    import http.cookiejar
+
     cookies_content = os.getenv("YOUTUBE_COOKIES", "").strip()
+    session = Session()
+    session.headers.update({"Accept-Language": "en-US"})
+
     if cookies_content:
         # Railway may encode newlines as literal \n — restore them
         cookies_content = cookies_content.replace('\\n', '\n')
@@ -106,10 +112,17 @@ def _make_transcript_api() -> YouTubeTranscriptApi:
         tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
         tmp.write(cookies_content)
         tmp.close()
-        print(f"[cookies] using cookie file: {tmp.name}, size={len(cookies_content)}", flush=True)
-        return YouTubeTranscriptApi(cookies=tmp.name)
-    print("[cookies] no YOUTUBE_COOKIES env var set", flush=True)
-    return YouTubeTranscriptApi()
+        try:
+            jar = http.cookiejar.MozillaCookieJar(tmp.name)
+            jar.load(ignore_discard=True, ignore_expires=True)
+            session.cookies = jar
+            print(f"[cookies] loaded {len(list(jar))} cookies from cookie file", flush=True)
+        except Exception as ce:
+            print(f"[cookies] failed to load cookies: {ce}", flush=True)
+    else:
+        print("[cookies] no YOUTUBE_COOKIES env var set", flush=True)
+
+    return YouTubeTranscriptApi(http_client=session)
 
 
 def fetch_transcript(video_id: str) -> tuple[list[dict], str]:
