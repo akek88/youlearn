@@ -94,7 +94,10 @@ def _db_cache_set(video_id: str, data: dict) -> None:
         print(f"[db_cache_set] error: {e}", flush=True)
 
 if _DB_URL:
-    _init_db()
+    try:
+        _init_db()
+    except Exception as _e:
+        print(f"[db] _init_db failed (app will still start): {_e}", flush=True)
 
 
 # ── In-memory result cache (video_id → full response dict) ──────────────────
