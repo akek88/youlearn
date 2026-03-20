@@ -820,9 +820,17 @@ function exportNotes(analysis, videoId, videoUrl) {
 const HISTORY_USER_KEY = 'youlearn_user_id'
 const _API = import.meta.env.VITE_API_URL || ''
 
+function generateId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16)
+  })
+}
+
 function getUserId() {
   let id = localStorage.getItem(HISTORY_USER_KEY)
-  if (!id) { id = crypto.randomUUID(); localStorage.setItem(HISTORY_USER_KEY, id) }
+  if (!id) { id = generateId(); localStorage.setItem(HISTORY_USER_KEY, id) }
   return id
 }
 
