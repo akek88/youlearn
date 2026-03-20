@@ -23,9 +23,20 @@ import psycopg2.extras
 # Railway provides "postgres://" but psycopg2 requires "postgresql://"
 _DB_URL = os.getenv("DATABASE_URL", "").replace("postgres://", "postgresql://", 1)
 
+from contextlib import contextmanager
+
+@contextmanager
 def _db():
+    """Open a DB connection, auto-commit on success, rollback + close on error."""
     conn = psycopg2.connect(_DB_URL)
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 def _init_db():
     with _db() as conn:
@@ -79,7 +90,6 @@ def _db_cache_set(video_id: str, data: dict) -> None:
                            created_at = NOW()''',
                     (video_id, json.dumps(data))
                 )
-            conn.commit()
     except Exception as e:
         print(f"[db_cache_set] error: {e}", flush=True)
 
@@ -479,7 +489,6 @@ def history_route():
                            watched_at = EXCLUDED.watched_at''',
                     (user_id, video_id, url, theme, now)
                 )
-            conn.commit()
         return jsonify({"ok": True})
 
     # DELETE
