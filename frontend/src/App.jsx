@@ -1318,7 +1318,7 @@ export default function App() {
     } else {
       clearTimeout(progressRef.current)
       progressRef.current = null
-      if (status === 'done' || status === 'error' || status === 'analyzing') {
+      if (status === 'done' || status === 'error') {
         setProgress(100)
       }
     }
@@ -1377,7 +1377,7 @@ export default function App() {
 
   /* ── Analyze (accepts explicit URL to avoid stale-closure issues from history replay) ── */
   const handleAnalyzeWith = async (targetUrl) => {
-    if (!targetUrl.trim() || status === 'loading' || status === 'analyzing') return
+    if (!targetUrl.trim() || status === 'loading') return
     setStatus('loading')
     setErrorMsg('')
     setResult(null)
@@ -1392,47 +1392,12 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: targetUrl.trim() }),
       })
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}))
-        throw new Error(errData.error || `HTTP ${res.status}`)
-      }
-
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let partial = null
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const parts = buffer.split('\n\n')
-        buffer = parts.pop()
-        for (const part of parts) {
-          for (const line of part.split('\n')) {
-            if (!line.startsWith('data: ')) continue
-            let evt
-            try { evt = JSON.parse(line.slice(6)) } catch { continue }
-            if (evt.type === 'error') throw new Error(evt.error)
-            if (evt.type === 'cached') {
-              setResult(evt.data)
-              setStatus('done')
-              await saveHistory(evt.data.videoId, targetUrl.trim(), evt.data.analysis?.theme || '')
-              setHistoryEntries(await loadHistory())
-            } else if (evt.type === 'analysis') {
-              partial = { videoId: evt.videoId, analysis: evt.data, subtitles: null }
-              setResult({ ...partial })
-              setStatus('analyzing')
-            } else if (evt.type === 'subtitles') {
-              partial = { ...partial, subtitles: evt.data }
-              setResult({ ...partial })
-              setStatus('done')
-              await saveHistory(partial.videoId, targetUrl.trim(), partial.analysis?.theme || '')
-              setHistoryEntries(await loadHistory())
-            }
-          }
-        }
-      }
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+      setResult(data)
+      setStatus('done')
+      await saveHistory(data.videoId, targetUrl.trim(), data.analysis?.theme || '')
+      setHistoryEntries(await loadHistory())
     } catch (e) {
       setErrorMsg(e.message)
       setStatus('error')
@@ -1485,7 +1450,7 @@ export default function App() {
           <button
             style={{ ...S.btn, ...(status === 'loading' ? S.btnDisabled : {}) }}
             onClick={handleAnalyze}
-            disabled={status === 'loading' || status === 'analyzing'}
+            disabled={status === 'loading'}
             onMouseEnter={(e) => { if (status !== 'loading') e.target.style.opacity = '.85' }}
             onMouseLeave={(e) => (e.target.style.opacity = '1')}
           >
@@ -1502,12 +1467,6 @@ export default function App() {
                 {Math.floor(progress)}%
               </span>
               <span style={{ color: '#818cf8' }}>分析中，请稍候...</span>
-            </>
-          )}
-          {status === 'analyzing' && (
-            <>
-              <div style={S.spinner} />
-              <span style={{ color: '#a78bfa' }}>字幕翻译中，请稍候...</span>
             </>
           )}
           {status === 'done' && (
@@ -1553,7 +1512,7 @@ export default function App() {
       )}
 
       {/* ── Main content ── */}
-      {(status === 'done' || status === 'analyzing') && result && (
+      {status === 'done' && result && (
         <div style={S.main}>
 
           {/* Left column */}
@@ -1633,13 +1592,6 @@ export default function App() {
             <div style={S.rightCol}>
               <div style={S.timelineHeader}>字幕时间轴</div>
               {/* Metro-line timeline — only this div scrolls */}
-              {!result.subtitles ? (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  flex: 1, gap: 10, color: '#6b6b8d', fontSize: 14 }}>
-                  <div style={S.spinner} />
-                  字幕翻译中，请稍候...
-                </div>
-              ) : (
               <div style={S.timelineScroll} ref={timelineScrollRef} className="timeline-scroll">
                 <div className="timeline-track">
                   {result.subtitles.map((s, i) => {
@@ -1669,7 +1621,6 @@ export default function App() {
                   })}
                 </div>
               </div>
-              )}
             </div>
           )}
 
