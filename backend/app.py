@@ -107,14 +107,12 @@ def _cache_set(video_id: str, data: dict) -> None:
 
 
 def get_client():
-    """Lazy-init DeepSeek client so missing key doesn't crash startup."""
-    api_key = os.getenv("DEEPSEEK_API_KEY")
+    """Lazy-init OpenRouter client."""
+    api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
-        raise RuntimeError("DEEPSEEK_API_KEY environment variable is not set")
-    return OpenAI(
-        api_key=api_key,
-        base_url="https://api.deepseek.com",
-    )
+        raise RuntimeError("OPENROUTER_API_KEY environment variable is not set")
+    base_url = "https://openrouter.ai/api/v1" if os.getenv("OPENROUTER_API_KEY") else "https://api.deepseek.com"
+    return OpenAI(api_key=api_key, base_url=base_url)
 
 
 def extract_video_id(url: str) -> str | None:
@@ -220,8 +218,9 @@ def parse_json_response(raw: str) -> dict | list:
 def deepseek_generate(prompt: str) -> str:
     """Call DeepSeek and return response text, with error mapping."""
     try:
+        model = "qwen/qwen-2.5-72b-instruct" if os.getenv("OPENROUTER_API_KEY") else "deepseek-chat"
         response = get_client().chat.completions.create(
-            model="deepseek-chat",
+            model=model,
             messages=[{"role": "user", "content": prompt}],
             timeout=120.0,
         )
