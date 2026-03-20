@@ -96,12 +96,24 @@ def snippets_to_dicts(snippets) -> list[dict]:
     return [{"start": s.start, "duration": s.duration, "text": s.text} for s in snippets]
 
 
+def _make_transcript_api() -> YouTubeTranscriptApi:
+    """Return a YouTubeTranscriptApi instance, using YouTube cookies if available."""
+    cookies_content = os.getenv("YOUTUBE_COOKIES", "").strip()
+    if cookies_content:
+        import tempfile
+        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+        tmp.write(cookies_content)
+        tmp.close()
+        return YouTubeTranscriptApi(cookies=tmp.name)
+    return YouTubeTranscriptApi()
+
+
 def fetch_transcript(video_id: str) -> tuple[list[dict], str]:
     """
     Fetch transcript with priority: zh > en > auto-generated.
     Returns (transcript_list, language_code).
     """
-    api = YouTubeTranscriptApi()
+    api = _make_transcript_api()
     transcript_list = api.list(video_id)
 
     # Priority 1: manual Chinese
