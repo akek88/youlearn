@@ -20,7 +20,8 @@ CORS(app, origins="*")
 import psycopg2
 import psycopg2.extras
 
-_DB_URL = os.getenv("DATABASE_URL", "")
+# Railway provides "postgres://" but psycopg2 requires "postgresql://"
+_DB_URL = os.getenv("DATABASE_URL", "").replace("postgres://", "postgresql://", 1)
 
 def _db():
     conn = psycopg2.connect(_DB_URL)
