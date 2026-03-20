@@ -100,11 +100,15 @@ def _make_transcript_api() -> YouTubeTranscriptApi:
     """Return a YouTubeTranscriptApi instance, using YouTube cookies if available."""
     cookies_content = os.getenv("YOUTUBE_COOKIES", "").strip()
     if cookies_content:
+        # Railway may encode newlines as literal \n — restore them
+        cookies_content = cookies_content.replace('\\n', '\n')
         import tempfile
         tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
         tmp.write(cookies_content)
         tmp.close()
+        print(f"[cookies] using cookie file: {tmp.name}, size={len(cookies_content)}", flush=True)
         return YouTubeTranscriptApi(cookies=tmp.name)
+    print("[cookies] no YOUTUBE_COOKIES env var set", flush=True)
     return YouTubeTranscriptApi()
 
 
@@ -464,6 +468,9 @@ def analyze():
     except socket.timeout:
         return jsonify({"error": "字幕提取超时，请重试"}), 504
     except Exception as e:
+        import traceback
+        print(f"[transcript error] {type(e).__name__}: {e}", flush=True)
+        traceback.print_exc()
         err = str(e).lower()
         if "timeout" in err or "timed out" in err:
             return jsonify({"error": "字幕提取超时，请重试"}), 504
@@ -474,8 +481,8 @@ def analyze():
         ]
         if any(kw in err for kw in unavailable_keywords):
             return jsonify({"error": "该视频不可用（可能已删除、设为私密或受年龄限制）"}), 422
-        # Generic transcript error — return a short clean message, not the raw exception
-        return jsonify({"error": "字幕提取失败，请确认视频存在且有字幕"}), 422
+        # Generic transcript error — include actual error for debugging
+        return jsonify({"error": f"字幕提取失败: {type(e).__name__}: {str(e)[:200]}"}), 422
 
     # Steps 3 + 4: Translation and analysis run CONCURRENTLY ─────────────────
     #
