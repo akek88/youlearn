@@ -4,8 +4,8 @@ import json
 import socket
 import threading
 from datetime import datetime, timezone
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from flask import Flask, request, jsonify, send_from_directory
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
+from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
 from flask_cors import CORS
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
 from openai import OpenAI, AuthenticationError, RateLimitError, APITimeoutError, APIConnectionError
@@ -40,7 +40,48 @@ def _init_db():
                     PRIMARY KEY (user_id, video_id)
                 )
             ''')
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS video_cache (
+                    video_id   TEXT PRIMARY KEY,
+                    data       JSONB NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            ''')
         conn.commit()
+
+
+def _db_cache_get(video_id: str) -> dict | None:
+    if not _DB_URL:
+        return None
+    try:
+        with _db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT data FROM video_cache WHERE video_id = %s", (video_id,))
+                row = cur.fetchone()
+        if row:
+            return row[0]  # psycopg2 auto-parses JSONB to dict
+    except Exception as e:
+        print(f"[db_cache_get] error: {e}", flush=True)
+    return None
+
+
+def _db_cache_set(video_id: str, data: dict) -> None:
+    if not _DB_URL:
+        return
+    try:
+        with _db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    '''INSERT INTO video_cache (video_id, data)
+                       VALUES (%s, %s::jsonb)
+                       ON CONFLICT (video_id) DO UPDATE SET
+                           data = EXCLUDED.data,
+                           created_at = NOW()''',
+                    (video_id, json.dumps(data))
+                )
+            conn.commit()
+    except Exception as e:
+        print(f"[db_cache_set] error: {e}", flush=True)
 
 if _DB_URL:
     _init_db()
@@ -182,7 +223,7 @@ def deepseek_generate(prompt: str) -> str:
         response = get_client().chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],
-            timeout=60.0,
+            timeout=120.0,
         )
         return response.choices[0].message.content
     except AuthenticationError:
@@ -255,8 +296,8 @@ def translate_subtitles(subtitles: list[dict]) -> list[dict]:
                  fresh batches using the actual original line numbers as keys, so the
                  returned JSON maps directly back without positional ambiguity.
     """
-    BATCH_SIZE = 50           # smaller → model skips fewer lines per prompt
-    MAX_WORKERS = 5           # lower → less risk of DeepSeek rate-limiting
+    BATCH_SIZE = 100          # larger batches → fewer API calls → faster overall
+    MAX_WORKERS = 10          # more parallelism → faster translation
 
     batches = [
         (i, subtitles[i:i + BATCH_SIZE])
@@ -460,100 +501,100 @@ def analyze():
         return jsonify({"error": "Missing 'url' in request body"}), 400
 
     url = data["url"].strip()
-
-    # Step 1: Extract video ID
     video_id = extract_video_id(url)
     if not video_id:
         return jsonify({"error": "Could not extract video ID from URL"}), 400
 
-    # ── Cache hit: return instantly for previously-analyzed videos ──────────
-    cached = _cache_get(video_id)
-    if cached:
-        return jsonify(cached)
+    def _event(obj: dict) -> str:
+        return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
 
-    # Step 2: Fetch transcript
-    try:
-        raw_subtitles, lang = fetch_transcript(video_id)
-    except TranscriptsDisabled:
-        return jsonify({"error": "该视频没有可用字幕"}), 422
-    except NoTranscriptFound:
-        return jsonify({"error": "该视频没有可用字幕"}), 422
-    except socket.timeout:
-        return jsonify({"error": "字幕提取超时，请重试"}), 504
-    except Exception as e:
-        import traceback
-        print(f"[transcript error] {type(e).__name__}: {e}", flush=True)
-        traceback.print_exc()
-        err = str(e).lower()
-        if "timeout" in err or "timed out" in err:
-            return jsonify({"error": "字幕提取超时，请重试"}), 504
-        # Video unavailable / deleted / private / age-restricted → 422 with clean message
-        unavailable_keywords = [
-            "no longer available", "unavailable", "private", "does not exist",
-            "video unavailable", "not available", "removed", "age-restricted",
-        ]
-        if any(kw in err for kw in unavailable_keywords):
-            return jsonify({"error": "该视频不可用（可能已删除、设为私密或受年龄限制）"}), 422
-        # Generic transcript error — include actual error for debugging
-        return jsonify({"error": f"字幕提取失败: {type(e).__name__}: {str(e)[:200]}"}), 422
+    # ── In-memory cache hit ──────────────────────────────────────────────────
+    mem_cached = _cache_get(video_id)
+    if mem_cached:
+        def _mem_stream():
+            yield _event({"type": "cached", "data": mem_cached})
+        return Response(stream_with_context(_mem_stream()),
+                        mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    # Steps 3 + 4: Translation and analysis run CONCURRENTLY ─────────────────
-    #
-    #  ┌─ build_bilingual_subtitles ─────── parallel batches ──┐
-    #  │  (translate all subtitle lines)                        ├─ both finish
-    #  └─ analyze_transcript ──────────────── single call ──────┘  together
-    #
-    # analyze_transcript uses raw_subtitles directly so it doesn't wait
-    # for translation to complete first.
+    # ── DB cache hit ─────────────────────────────────────────────────────────
+    db_cached = _db_cache_get(video_id)
+    if db_cached:
+        _cache_set(video_id, db_cached)
+        def _db_stream():
+            yield _event({"type": "cached", "data": db_cached})
+        return Response(stream_with_context(_db_stream()),
+                        mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    bilingual_subtitles = None
-    analysis = None
-    error_response = None
-
-    def _translate():
-        return build_bilingual_subtitles(raw_subtitles, lang)
-
-    def _analyze():
-        return analyze_transcript(raw_subtitles)
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        ft = pool.submit(_translate)
-        fa = pool.submit(_analyze)
-
-        # Collect translation result
+    # ── Stream: fetch → analysis → subtitles ─────────────────────────────────
+    def generate():
+        # Step 1: Fetch transcript
         try:
-            bilingual_subtitles = ft.result()
-        except TimeoutError as e:
-            error_response = (jsonify({"error": str(e)}), 504)
-        except ValueError as e:
-            error_response = (jsonify({"error": str(e)}), 401)
+            raw_subtitles, lang = fetch_transcript(video_id)
+        except TranscriptsDisabled:
+            yield _event({"type": "error", "error": "该视频没有可用字幕"})
+            return
+        except NoTranscriptFound:
+            yield _event({"type": "error", "error": "该视频没有可用字幕"})
+            return
+        except socket.timeout:
+            yield _event({"type": "error", "error": "字幕提取超时，请重试"})
+            return
         except Exception as e:
-            error_response = (jsonify({"error": f"翻译失败：{str(e)}"}), 500)
+            import traceback
+            traceback.print_exc()
+            err = str(e).lower()
+            if "timeout" in err or "timed out" in err:
+                msg = "字幕提取超时，请重试"
+            elif any(kw in err for kw in ["no longer available", "unavailable", "private",
+                                           "does not exist", "video unavailable",
+                                           "not available", "removed", "age-restricted"]):
+                msg = "该视频不可用（可能已删除、设为私密或受年龄限制）"
+            else:
+                msg = f"字幕提取失败: {type(e).__name__}: {str(e)[:200]}"
+            yield _event({"type": "error", "error": msg})
+            return
 
-        # Collect analysis result
-        try:
-            analysis = fa.result()
-        except TimeoutError as e:
-            if not error_response:
-                error_response = (jsonify({"error": str(e)}), 504)
-        except ValueError as e:
-            if not error_response:
-                error_response = (jsonify({"error": str(e)}), 401)
-        except Exception as e:
-            if not error_response:
-                error_response = (jsonify({"error": f"分析失败：{str(e)}"}), 500)
+        # Step 2: Run analysis + translation concurrently.
+        # Yield analysis as soon as it's ready (~30–60 s) so the UI can show
+        # key-points immediately, then yield subtitles when translation finishes.
+        analysis_val = None
+        subtitles_val = None
 
-    if error_response:
-        return error_response
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fa = pool.submit(analyze_transcript, raw_subtitles)
+            ft = pool.submit(build_bilingual_subtitles, raw_subtitles, lang)
+            pending = {fa, ft}
+            had_error = False
 
-    # Step 5: Build, cache, and return full response
-    response_data = {
-        "videoId": video_id,
-        "subtitles": bilingual_subtitles,
-        "analysis": analysis,
-    }
-    _cache_set(video_id, response_data)
-    return jsonify(response_data)
+            while pending and not had_error:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    try:
+                        val = future.result()
+                        if future is fa:
+                            analysis_val = val
+                            yield _event({"type": "analysis", "videoId": video_id, "data": val})
+                        else:
+                            subtitles_val = val
+                            yield _event({"type": "subtitles", "data": val})
+                    except Exception as e:
+                        had_error = True
+                        yield _event({"type": "error", "error": str(e)})
+
+        if had_error or not analysis_val or not subtitles_val:
+            return
+
+        # Step 3: Cache complete result
+        response_data = {"videoId": video_id, "subtitles": subtitles_val, "analysis": analysis_val}
+        _cache_set(video_id, response_data)
+        _db_cache_set(video_id, response_data)
+        yield _event({"type": "done"})
+
+    return Response(stream_with_context(generate()),
+                    mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # ── Static file serving (production: Flask hosts the built frontend) ──
