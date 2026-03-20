@@ -818,6 +818,7 @@ function exportNotes(analysis, videoId, videoUrl) {
    Watch history — synced via backend API
 ───────────────────────────────────────────── */
 const HISTORY_USER_KEY = 'youlearn_user_id'
+const HISTORY_KEY = 'youlearn_history'
 const _API = import.meta.env.VITE_API_URL || ''
 
 function generateId() {
@@ -834,17 +835,28 @@ function getUserId() {
   return id
 }
 
-async function loadHistory() {
-  try {
-    const res = await fetch(`${_API}/api/history?user_id=${encodeURIComponent(getUserId())}`)
-    if (!res.ok) return []
-    return await res.json()
-  } catch { return [] }
+function getLocalHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]') }
+  catch { return [] }
+}
+
+// Primary storage: localStorage (instant, always works).
+// Secondary storage: backend DB (best-effort, for cross-device sync).
+function loadHistory() {
+  return Promise.resolve(getLocalHistory())
 }
 
 async function saveHistory(videoId, videoUrl, theme) {
+  // 1. Save to localStorage immediately — this is what the UI reads
+  const now = new Date().toISOString()
+  const entries = getLocalHistory().filter(e => e.videoId !== videoId)
+  entries.unshift({ videoId, url: videoUrl, theme, watchedAt: now })
+  if (entries.length > 20) entries.length = 20
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(entries))
+
+  // 2. Sync to DB in the background (cross-device sync, best effort)
   try {
-    await fetch(`${_API}/api/history`, {
+    fetch(`${_API}/api/history`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_id: getUserId(), video_id: videoId, url: videoUrl, theme }),
@@ -852,10 +864,11 @@ async function saveHistory(videoId, videoUrl, theme) {
   } catch {}
 }
 
-async function clearHistory() {
-  try {
-    await fetch(`${_API}/api/history?user_id=${encodeURIComponent(getUserId())}`, { method: 'DELETE' })
-  } catch {}
+function clearHistory() {
+  localStorage.removeItem(HISTORY_KEY)
+  // Best-effort DB delete
+  try { fetch(`${_API}/api/history?user_id=${encodeURIComponent(getUserId())}`, { method: 'DELETE' }) } catch {}
+  return Promise.resolve()
 }
 
 function formatTheme(theme = '') {
@@ -1703,7 +1716,19 @@ export default function App() {
                     localStorage.setItem(HISTORY_USER_KEY, code)
                     setUserId(code)
                     setSyncInput('')
-                    setHistoryEntries(await loadHistory())
+                    // Pull history from DB for the new user_id and overwrite localStorage
+                    try {
+                      const res = await fetch(`${_API}/api/history?user_id=${encodeURIComponent(code)}`)
+                      if (res.ok) {
+                        const dbEntries = await res.json()
+                        if (dbEntries.length > 0) {
+                          localStorage.setItem(HISTORY_KEY, JSON.stringify(dbEntries))
+                          setHistoryEntries(dbEntries)
+                          return
+                        }
+                      }
+                    } catch {}
+                    setHistoryEntries(getLocalHistory())
                   }}
                 >Apply</button>
               </div>
