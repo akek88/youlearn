@@ -842,8 +842,22 @@ function getLocalHistory() {
 
 // Primary storage: localStorage (instant, always works).
 // Secondary storage: backend DB (best-effort, for cross-device sync).
-function loadHistory() {
-  return Promise.resolve(getLocalHistory())
+async function loadHistory() {
+  const local = getLocalHistory()
+  if (local.length > 0) return local
+
+  // localStorage is empty — try restoring from DB (handles new browser / cleared cache)
+  try {
+    const res = await fetch(`${_API}/api/history?user_id=${encodeURIComponent(getUserId())}`)
+    if (res.ok) {
+      const remote = await res.json()
+      if (Array.isArray(remote) && remote.length > 0) {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(remote))
+        return remote
+      }
+    }
+  } catch {}
+  return local
 }
 
 async function saveHistory(videoId, videoUrl, theme) {
@@ -1412,7 +1426,13 @@ export default function App() {
       await saveHistory(data.videoId, targetUrl.trim(), data.analysis?.theme || '')
       setHistoryEntries(await loadHistory())
     } catch (e) {
-      setErrorMsg(e.message)
+      const msg = e.message || 'Unknown error'
+      // Translate known backend errors to user-friendly English
+      const friendly = msg.includes('IpBlocked') || msg.includes('字幕提取失败')
+        ? `⚠ YouTube is blocking this server's IP. Please try again in a moment, or contact support. (${msg})`
+        : msg.includes('字幕') ? `Subtitle error: ${msg}`
+        : msg
+      setErrorMsg(friendly)
       setStatus('error')
     }
   }

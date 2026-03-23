@@ -58,7 +58,6 @@ def _init_db():
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                 )
             ''')
-        conn.commit()
 
 
 def _db_cache_get(video_id: str) -> dict | None:
