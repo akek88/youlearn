@@ -154,7 +154,16 @@ def _make_transcript_api() -> YouTubeTranscriptApi:
 
     cookies_content = os.getenv("YOUTUBE_COOKIES", "").strip()
     session = Session()
-    session.headers.update({"Accept-Language": "en-US"})
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Referer": "https://www.youtube.com/",
+    })
 
     if cookies_content:
         # Railway may encode newlines as literal \n — restore them
